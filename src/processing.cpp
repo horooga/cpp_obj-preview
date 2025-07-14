@@ -10,7 +10,7 @@
 #include <sstream>
 #include <iomanip>
 #include <fstream>
-#include "Cpp_obj-preview/processing.h"
+#include "cpp_obj-preview/processing.h"
 
 struct IndexLess {
     bool operator()(const tinyobj::index_t& a, const tinyobj::index_t& b) const {
@@ -23,35 +23,11 @@ struct IndexLess {
 };
 
 Shader::Shader() {
-    std::string vertexCode;
-    std::string fragmentCode;
-    std::ifstream vShaderFile;
-    std::ifstream fShaderFile;
-
-    vShaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-    fShaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-
-    try {
-        vShaderFile.open("shaders/shader.vert");
-        fShaderFile.open("shaders/shader.frag");
-        std::stringstream vShaderStream, fShaderStream;
-        vShaderStream << vShaderFile.rdbuf();
-        fShaderStream << fShaderFile.rdbuf();
-        vShaderFile.close();
-        fShaderFile.close();
-        vertexCode = vShaderStream.str();
-        fragmentCode = fShaderStream.str();
-    }
-    catch (std::ifstream::failure& e) {
-        std::cerr << "Error: Shader file is not successfully read\n";
-    }
-    const char* vShaderCode = vertexCode.c_str();
-    const char* fShaderCode = fragmentCode.c_str();
     unsigned int vertex, fragment;
     int success;
     char infoLog[512];
     vertex = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertex, 1, &vShaderCode, nullptr);
+    glShaderSource(vertex, 1, &VERTEX_CODE, nullptr);
     glCompileShader(vertex);
     glGetShaderiv(vertex, GL_COMPILE_STATUS, &success);
     if (!success) {
@@ -59,7 +35,7 @@ Shader::Shader() {
         std::cerr << "Error: vertex shader compilation failed\n" << infoLog << std::endl;
     }
     fragment = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragment, 1, &fShaderCode, nullptr);
+    glShaderSource(fragment, 1, &FRAGMENT_CODE, nullptr);
     glCompileShader(fragment);
     glGetShaderiv(fragment, GL_COMPILE_STATUS, &success);
     if (!success) {
@@ -145,25 +121,6 @@ void saveFrameAsPPM(int frame, const std::vector<unsigned char>& pixels, int wid
     out.close();
 }
 
-void runCommands() {
-    std::string ffmpegCmd = "ffmpeg -framerate 20 -i frame_%03d.ppm -filter_complex "
-                             "\"palettegen=stats_mode=full[p];[0][p]paletteuse=dither=sierra2_4a\" "
-                             "-fps_mode passthrough obj-overview.gif";
-
-    int ret = std::system(ffmpegCmd.c_str());
-    if (ret != 0) {
-        std::cerr << "Error: Failed to run: ffmpeg -framerate 20 -i frame_%03d.ppm -filter_complex \"palettegen=stats_mode=full[p];[0][p]paletteuse=dither=sierra2_4a\" -fps_mode passthrough obj-overview_overview.gif" << std::endl;
-    }
-
-    std::string rmCmd = "rm frame_*.ppm";
-
-    ret = std::system(rmCmd.c_str());
-    if (ret != 0) {
-        std::cerr << "Error: Failed to run: rm frame_*.ppm" << std::endl;
-    }
-
-}
-
 void drawModel(const std::vector<MeshGL>& meshes, const std::vector<tinyobj::material_t>& materials, Shader& shader) {
     for (const auto& mesh : meshes) {
         glBindVertexArray(mesh.vao);
@@ -182,6 +139,19 @@ void drawModel(const std::vector<MeshGL>& meshes, const std::vector<tinyobj::mat
         glDrawElements(GL_TRIANGLES, mesh.indexCount, GL_UNSIGNED_INT, 0);
     }
     glBindVertexArray(0);
+}
+
+std::string rgbToHex(float red, float green, float blue) {
+    int r = static_cast<int>(std::round(red * 255.0f));
+    int g = static_cast<int>(std::round(green * 255.0f));
+    int b = static_cast<int>(std::round(blue * 255.0f));
+
+    std::stringstream ss;
+    ss << std::hex << std::uppercase << std::setfill('0');
+    ss << std::setw(2) << r;
+    ss << std::setw(2) << g;
+    ss << std::setw(2) << b;
+    return ss.str();
 }
 
 int render(std::vector<MeshGL>& meshes, tinyobj::attrib_t& attrib, const std::vector<tinyobj::material_t>& materials, GLFWwindow* window) {
@@ -238,7 +208,6 @@ int render(std::vector<MeshGL>& meshes, tinyobj::attrib_t& attrib, const std::ve
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
-    runCommands();
 
     return 0;
 }

@@ -3,9 +3,11 @@
 #include <fstream>
 #include <string>
 #include <vector>
-#include "Cpp_obj-preview/processing.h"
+#include <cstdio>
+#include <unordered_map>
+#include "cpp_obj-preview/processing.h"
 
-std::vector<std::string> ReadObjComments(const std::string& filename) {
+std::vector<std::string> readObjComments(const std::string& filename) {
     std::vector<std::string> comments;
     std::ifstream file(filename);
     if (!file.is_open()) {
@@ -22,33 +24,73 @@ std::vector<std::string> ReadObjComments(const std::string& filename) {
     return comments;
 }
 
-std::string rgbToHex(float red, float green, float blue) {
-    int r = static_cast<int>(std::round(red * 255.0f));
-    int g = static_cast<int>(std::round(green * 255.0f));
-    int b = static_cast<int>(std::round(blue * 255.0f));
+std::unordered_map<std::string, std::string> readConfig(std::string filename) {
+    std::unordered_map<std::string, std::string> config; 
 
-    std::stringstream ss;
-    ss << std::hex << std::uppercase << std::setfill('0');
-    ss << std::setw(2) << r;
-    ss << std::setw(2) << g;
-    ss << std::setw(2) << b;
-    return ss.str();
-}
-
-
-int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cerr << "Usage: exe [file.obj]\n";
-        return 1;
+    std::ifstream file(filename);
+    if (!file) {
+        printf("Failed to open config file %s\n", filename.c_str());
+        return config;
     }
 
-    const std::string filename = argv[1];
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '#') continue;
 
-    tinyobj::attrib_t attrib;
-    std::vector<tinyobj::shape_t> shapes;
-    std::vector<tinyobj::material_t> materials;
+        std::istringstream iss(line);
+        std::string key, value;
+        if (std::getline(iss, key, '=') && std::getline(iss, value)) {
+            config[key] = value;
+        }
+    }
+    return config;
+}
+
+void viewCmd(const std::string& open_cmd, std::string save_dir) {
+    std::string command = open_cmd + " " + save_dir + "obj-preview.md";
+    int ret = std::system(command.c_str());
+    if (ret != 0) {
+        std::cerr << "Error: Failed to open " << save_dir << "obj-preview.md in the config viewer\n";
+    }
+}
+
+void clean(std::string save_dir) {
+    std::remove((save_dir + "obj-preview.md").c_str());
+    std::remove((save_dir + "obj-overview.gif").c_str());
+}
+
+int runGifGenCmd(std::string save_dir, std::string overwrite_flag) {
+    std::string ffmpegCmd = "ffmpeg -framerate 20 -i frame_%03d.ppm -filter_complex "
+                             "\"palettegen=stats_mode=full[p];[0][p]paletteuse=dither=sierra2_4a\" "
+                             "-fps_mode passthrough " + overwrite_flag + save_dir + "obj-overview.gif";
+
+    int ret = std::system(ffmpegCmd.c_str());
+    if (ret != 0) {
+        std::cerr << "Error: Failed to run: " << ffmpegCmd << std::endl;
+    }
+
+    std::string rmCmd = "rm frame_*.ppm";
+
+    ret = std::system(rmCmd.c_str());
+    if (ret != 0) {
+        std::cerr << "Error: Failed to run: rm frame_*.ppm" << std::endl;
+    }
+
+    return 0;
+}
+
+std::string extendHome(std::string path) {
+    if (!path.empty() && path[0] == '~') {
+        const char* home = getenv("HOME");
+        if (home) {
+            path = std::string(home) + path.substr(1);
+        }
+    }
+    return path;
+}
+
+int generateOverview(tinyobj::attrib_t& attrib, std::vector<tinyobj::shape_t>& shapes, std::vector<tinyobj::material_t>& materials, std::string filename, std::string save_dir) {
     std::string warn, err;
-
     bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filename.c_str());
     if (!warn.empty()) std::cout << "Error: " << warn << std::endl;
     if (!err.empty()) std::cerr << "Error: " << err << std::endl;
@@ -91,17 +133,20 @@ int main(int argc, char** argv) {
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    std::ofstream report("obj-preview.md");
+    return 0;
+}
+
+int generateReport(tinyobj::attrib_t& attrib, std::vector<tinyobj::shape_t>& shapes, std::vector<tinyobj::material_t>& materials, std::string filename, std::string save_dir) { 
+    std::ofstream report((save_dir + "obj-preview.md").c_str());
     if (!report.is_open()) {
         std::cerr << "Error: Failed to create report file obj-preview.md\n";
         return 1;
     }
-
     report << "# OBJ file preview\n\n";
     report << "File: `" << filename << "`\n\n";
 
     report << "## File Comments\n\n";
-    std::vector<std::string> comments = ReadObjComments(filename);
+    std::vector<std::string> comments = readObjComments(filename);
     if (comments.empty()) {
         report << "_No comments found in the OBJ file._\n";
     } else {
@@ -152,7 +197,60 @@ int main(int argc, char** argv) {
 
     report.close();
 
-    std::cout << "OBJ report generated: obj-overview.md\n";
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::cerr << "Usage: exe [file.obj | mode]\n\nmodes:\n\n    - clean - cleans saved preview.md and overview.gif";
+        return 1;
+    } 
+
+    const std::unordered_map<std::string, std::string> config = readConfig(extendHome("~/.config/cpp_obj-preview.conf"));
+    std::string save_dir = "./";
+    if (config.find("save-dir") != config.end()) {
+        save_dir = extendHome(config.at("save-dir"));
+        if (!save_dir.empty() && save_dir.back() != '/' && save_dir.back() != '\\') {
+            save_dir += '/';
+        }
+    }
+
+    if (std::string(argv[1]) == "clean") {
+        std::remove((save_dir + "obj-preview.md").c_str());
+        std::remove((save_dir + "obj-overview.gif").c_str());
+        return 0;
+    }
+
+    std::string filename = extendHome(argv[1]); 
+
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    int ret;
+
+    ret = generateOverview(attrib, shapes, materials, filename, save_dir);
+    if (ret != 0) {
+        return ret;
+    }
+    
+    std::string overwrite_flag = "";
+    if (config.find("overwrite-flag") != config.end()) {
+        config.at("overwrite-flag") == "true" || config.at("overwrite-flag") == "1" ? overwrite_flag = "-y " : overwrite_flag = "";
+    }
+
+    ret = runGifGenCmd(save_dir, overwrite_flag);
+    if (ret != 0) {
+        return ret;
+    }
+
+    ret = generateReport(attrib, shapes, materials, filename, save_dir);
+    if (ret != 0) {
+        return ret;
+    }
+
+    if (config.find("view-cmd") != config.end()) {
+        viewCmd(config.at("view-cmd"), save_dir);
+    }
 
     return 0;
 }
